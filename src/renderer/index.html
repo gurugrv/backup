@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BackYup</title>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="tabs">
+        <button class="tab-btn active" onclick="showTab('backup')">Backup</button>
+        <button class="tab-btn" onclick="showTab('restore')">Restore</button>
+        <button class="tab-btn" onclick="showTab('settings')">Settings</button>
+    </div>
+
+    <div id="backup" class="tab-content active">
+        <h2>Backup</h2>
+        <button id="select-files" class="primary-btn">Select Files/Folders</button>
+        <div id="selected-paths" class="paths-list"></div>
+        <button id="start-backup" class="primary-btn">Start Backup</button>
+        <div id="backup-progress" class="progress-area"></div>
+    </div>
+
+    <div id="restore" class="tab-content">
+        <h2>Restore</h2>
+        <div id="snapshots-list" class="tree-view"></div>
+        <button id="restore-selected" class="primary-btn">Restore Selected</button>
+        <div id="restore-progress" class="progress-area"></div>
+    </div>
+
+    <div id="settings" class="tab-content">
+        <h2>Settings</h2>
+        <div class="setting-group">
+            <h3>Backup Schedule</h3>
+            <select id="schedule-frequency">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="custom">Custom</option>
+            </select>
+            <input type="time" id="schedule-time" value="00:00">
+        </div>
+        <button id="save-settings" class="primary-btn">Save Settings</button>
+    </div>
+
+    <script src="scripts/renderer.js"></script>
+</body>
+</html>
