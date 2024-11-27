@@ -3,42 +3,36 @@
   "version": "1.0.0",
   "description": "Desktop backup application",
   "main": "src/main/main.js",
-  "author": "GRV",
   "scripts": {
-    "start": "electron-forge start --enable-logging",
-	"verify": "node scripts/verify-binary.js",
+    "start": "npm run build:css && electron-forge start --enable-logging",
+    "verify": "node scripts/verify-binary.js",
     "prestart": "npm run verify",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "eslint src/",
-    "test": "jest"
+    "build:css": "tailwindcss -i ./src/renderer/styles.css -o ./src/renderer/styles.output.css",
+    "watch:css": "tailwindcss -i ./src/renderer/styles.css -o ./src/renderer/styles.output.css --watch"
   },
   "config": {
     "forge": "./forge.config.js"
   },
-  "devDependencies": {
-    "@electron-forge/cli": "^7.5.0",
-    "@electron-forge/maker-deb": "^7.5.0",
-    "@electron-forge/maker-rpm": "^7.5.0",
-    "@electron-forge/maker-squirrel": "^7.5.0",
-    "@electron-forge/maker-zip": "^7.5.0",
-    "@electron-forge/plugin-auto-unpack-natives": "^7.5.0",
-    "@electron-forge/plugin-fuses": "^7.5.0",
-    "@electron/fuses": "^1.8.0",
-    "electron": "^33.2.0",
-    "eslint": "^8.55.0",
-    "jest": "^29.7.0",
-    "prettier": "^3.1.1"
-  },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "electron-squirrel-startup": "^1.0.1",
+    "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^10.0.0",
-    "fix": "^0.0.6",
-    "node-fetch": "^2.6.7",
     "node-schedule": "^2.1.1",
-    "update-electron-app": "^2.0.1",
     "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.2.0",
+    "@electron-forge/maker-deb": "^7.2.0",
+    "@electron-forge/maker-rpm": "^7.2.0",
+    "@electron-forge/maker-squirrel": "^7.2.0",
+    "@electron-forge/maker-zip": "^7.2.0",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.2.0",
+    "autoprefixer": "^10.4.20",
+    "electron": "^28.0.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15"
   }
 }

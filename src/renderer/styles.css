@@ -1,91 +1,40 @@
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    margin: 0;
-    padding: 20px;
-    background-color: #f5f5f5;
-    color: #333;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .cursor-pointer {
+    cursor: pointer !important;
+  }
+  
+  .cursor-not-allowed {
+    cursor: not-allowed !important;
+  }
 }
 
-.tabs {
-    display: flex;
-    margin-bottom: 20px;
-    border-bottom: 2px solid #ddd;
-}
+@layer components {
+  #selected-count {
+    @apply hidden;
+  }
 
-.tab-btn {
-    padding: 10px 20px;
-    margin-right: 5px;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 16px;
-    color: #666;
-}
+  #selected-paths > div.flex.items-center.justify-center {
+    @apply hidden;
+  }
 
-.tab-btn.active {
-    color: #2196F3;
-    border-bottom: 2px solid #2196F3;
-}
+  .backup-progress-info {
+    @apply flex items-center gap-2 p-3 mt-2 bg-gray-50 rounded text-sm text-gray-600 border border-gray-200;
+  }
 
-.tab-content {
-    display: none;
-    padding: 20px;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
+  .progress-bar-fill {
+    @apply h-full bg-primary transition-all duration-300;
+  }
 
-.tab-content.active {
-    display: block;
-}
+  /* Button states */
+  #start-backup:not(:disabled) {
+    @apply cursor-pointer hover:bg-primary-hover;
+  }
 
-.primary-btn {
-    background-color: #2196F3;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: background-color 0.3s;
-}
-
-.primary-btn:hover {
-    background-color: #1976D2;
-}
-
-.paths-list {
-    margin: 20px 0;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    min-height: 100px;
-}
-
-.tree-view {
-    margin: 20px 0;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-.setting-group {
-    margin: 20px 0;
-    padding: 15px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-}
-
-.progress-area {
-    margin-top: 20px;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    display: none;
-}
-
-.progress-area.active {
-    display: block;
+  #start-backup:disabled {
+    @apply cursor-not-allowed bg-gray-400;
+  }
 }

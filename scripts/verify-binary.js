@@ -1,3 +1,4 @@
+// src/scripts/verify-binary.js
 const fs = require('fs');
 const path = require('path');
 
