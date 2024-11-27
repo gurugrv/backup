@@ -10,6 +10,7 @@ export class SnapshotManager {
         try {
             const result = await window.electron.getSnapshots();
             if (result.success) {
+                console.log('Received snapshots from server:', result.snapshots);
                 this.processSnapshotData(result.snapshots);
                 return true;
             } else {
@@ -35,13 +36,26 @@ export class SnapshotManager {
             const existingSnapshot = this.snapshotData.get(sourcePath);
             
             if (!existingSnapshot || new Date(snapshot.startTime) > new Date(existingSnapshot.startTime)) {
+                console.log(`Processing snapshot for ${sourcePath}:`, snapshot);
+                
+                // Map the stats directly from the snapshot
+                const stats = {
+                    totalFiles: snapshot.stats?.totalFiles || 0, // This comes from the backend already calculated
+                    totalSize: snapshot.stats?.totalSize || 0,
+                    dirCount: snapshot.stats?.dirCount || 0
+                };
+
+                console.log(`Mapped stats for ${sourcePath}:`, stats);
+
                 this.snapshotData.set(sourcePath, {
                     startTime: snapshot.startTime,
-                    stats: snapshot.stats || { totalFiles: 0, totalSize: 0 },
+                    stats: stats,
                     path: sourcePath
                 });
             }
         });
+
+        console.log('Final processed snapshot data:', Array.from(this.snapshotData.entries()));
     }
 
     getSnapshotInfo(path) {
@@ -63,9 +77,26 @@ export class SnapshotManager {
     async deleteSnapshot(path) {
         try {
             this.deletingPaths.add(path);
-            await window.electron.deleteBackup(path);
-            this.deletingPaths.delete(path);
+            
+            // Delete the backup from repository
+            const result = await window.electron.deleteBackup(path);
+            
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to delete backup');
+            }
+            
+            // Remove the path from backup paths list
+            await window.electron.removeBackupPath(path);
+            
+            // Get fresh snapshot data after deletion
             await this.refreshSnapshots();
+            
+            // Remove from deleting paths set
+            this.deletingPaths.delete(path);
+            
+            // Dispatch event to notify backup manager to update UI
+            window.dispatchEvent(new CustomEvent('remove-path', { detail: path }));
+            
             return true;
         } catch (error) {
             console.error('Error deleting backup:', error);
@@ -92,10 +123,17 @@ export class SnapshotManager {
         let totalFiles = 0;
         let lastBackupTime = null;
 
-        this.snapshotData.forEach(snapshot => {
+        console.log('Starting backup stats calculation...');
+
+        this.snapshotData.forEach((snapshot, path) => {
             if (snapshot && snapshot.stats) {
-                totalSize += snapshot.stats.totalSize || 0;
+                console.log(`Processing stats for ${path}:`, snapshot.stats);
+                
+                // Add the stats from each snapshot
                 totalFiles += snapshot.stats.totalFiles || 0;
+                totalSize += snapshot.stats.totalSize || 0;
+
+                console.log(`Running totals - Files: ${totalFiles}, Size: ${totalSize}`);
                 
                 const snapshotTime = new Date(snapshot.startTime);
                 if (!lastBackupTime || snapshotTime > lastBackupTime) {
@@ -104,10 +142,13 @@ export class SnapshotManager {
             }
         });
 
-        return {
+        const stats = {
             totalSize,
             totalFiles,
             lastBackupTime
         };
+
+        console.log('Final calculated backup stats:', stats);
+        return stats;
     }
 }

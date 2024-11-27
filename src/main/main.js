@@ -18,20 +18,39 @@ async function initializeKopiaService() {
         KopiaService = require('./services/kopia');
         
         try {
-            // First try to connect to existing repository
-            await KopiaService.connectRepository();
-        } catch (error) {
-            // If repository doesn't exist, create it first
-            if (error.code === 'REPO_NOT_INITIALIZED') {
-                console.log('Repository not found, creating new repository...');
-                await KopiaService.createRepository();
-                console.log('Repository created, connecting...');
+            // First try to connect to repository
+            console.log('Attempting to connect to repository...');
+            try {
                 await KopiaService.connectRepository();
-            } else {
-                // If it's a different error, throw it
-                throw error;
+                console.log('Successfully connected to existing repository');
+                return;
+            } catch (error) {
+                // If connection fails, check if it's because repository doesn't exist
+                if (!error.message?.includes('repository not initialized')) {
+                    console.log('Repository exists but connection failed, retrying...');
+                    // Try to clean up and reconnect
+                    await KopiaService.repositoryService.cleanCacheDirectory();
+                    await KopiaService.connectRepository();
+                    return;
+                }
+                console.log('Repository does not exist, will create new one');
             }
+
+            // If we get here, we need to create a new repository
+            console.log('Creating new repository...');
+            await KopiaService.createRepository();
+            console.log('Repository created successfully');
+
+            // Connect to the newly created repository
+            console.log('Connecting to new repository...');
+            await KopiaService.connectRepository();
+            console.log('Connected to repository successfully');
+
+        } catch (error) {
+            console.error('Repository initialization failed:', error);
+            throw error;
         }
+
         console.log('Kopia service initialized successfully');
     } catch (error) {
         console.error('Failed to initialize Kopia service:', error);
@@ -110,7 +129,11 @@ app.whenReady().then(async () => {
 // Add cleanup on app quit
 app.on('before-quit', async () => {
     if (KopiaService) {
-        await KopiaService.disconnectRepository();
+        try {
+            await KopiaService.disconnectRepository();
+        } catch (error) {
+            console.error('Error disconnecting repository:', error);
+        }
     }
 });
 

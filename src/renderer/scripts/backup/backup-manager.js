@@ -3,6 +3,8 @@ import { BackupOperations } from './backup-operations.js';
 import { UIStateManager } from './ui-state-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
 
+const MAX_CONCURRENT_BACKUPS = 3; // Maximum number of concurrent backups
+
 export class BackupManager {
     constructor() {
         console.log('BackupManager: Initializing');
@@ -11,6 +13,7 @@ export class BackupManager {
         this.uiStateManager = new UIStateManager(this.elements);
         this.snapshotManager = new SnapshotManager();
         this.selectedPaths = new Set();
+        this.activeBackupCount = 0;
         this.initialize();
     }
 
@@ -21,8 +24,7 @@ export class BackupManager {
             addButton: document.getElementById('select-paths'),
             backupButton: document.getElementById('start-backup'),
             yourBackupsTable: document.getElementById('your-backups-body'),
-            selectedPathsList: document.getElementById('selected-paths'),
-            selectedCount: document.getElementById('selected-count'),
+            selectedPathsList: document.getElementById('selected-paths')
         };
 
         // Log which elements were found/not found
@@ -48,6 +50,7 @@ export class BackupManager {
                 if (status.inProgress) {
                     // If backup is in progress, set up UI and tracking
                     await this.backupOperations.resumeBackup(path);
+                    this.activeBackupCount++;
                 }
             }
         } catch (error) {
@@ -67,6 +70,11 @@ export class BackupManager {
         // Listen for snapshot refresh events
         window.addEventListener('refresh-snapshots', () => {
             this.refreshSnapshots();
+        });
+
+        // Listen for remove path events from backup operations
+        window.addEventListener('remove-path', (event) => {
+            this.removePath(event.detail);
         });
     }
 
@@ -162,22 +170,19 @@ export class BackupManager {
         const actions = document.createElement('div');
         actions.className = 'actions flex items-center gap-2';
 
-        const actionButton = document.createElement('button');
-        actionButton.className = 'backup-action p-2 text-red-500 hover:text-red-700';
-        actionButton.innerHTML = '<i class="fas fa-times"></i>';
-        actionButton.title = 'Remove from backup';
-        actionButton.onclick = () => this.removePath(path);
-
-        actions.appendChild(actionButton);
         pathItem.appendChild(pathInfo);
         pathItem.appendChild(actions);
         container.appendChild(pathItem);
+
+        // Initialize UI state for this path
+        this.backupOperations.updatePathItemUI(path);
     }
 
     async removePath(path) {
         try {
-            // If backup is in progress, just return without showing error
-            if (this.backupOperations.isBackupInProgress(path)) {
+            // If backup is in progress or pending, just return without showing error
+            if (this.backupOperations.isBackupInProgress(path) || 
+                this.backupOperations.isBackupPending(path)) {
                 return;
             }
 
@@ -211,8 +216,11 @@ export class BackupManager {
             // Get all paths before clearing the Set
             const paths = Array.from(this.selectedPaths);
             
-            // Don't clear paths that are currently backing up
-            const nonActivePaths = paths.filter(path => !this.backupOperations.isBackupInProgress(path));
+            // Don't clear paths that are currently backing up or pending
+            const nonActivePaths = paths.filter(path => 
+                !this.backupOperations.isBackupInProgress(path) && 
+                !this.backupOperations.isBackupPending(path)
+            );
             
             // Clear paths from storage and UI individually
             for (const path of nonActivePaths) {
@@ -227,7 +235,10 @@ export class BackupManager {
         if (!this.elements.backupButton) return;
 
         const hasSelectedPaths = this.selectedPaths.size > 0;
-        const hasNonActivePaths = Array.from(this.selectedPaths).some(path => !this.backupOperations.isBackupInProgress(path));
+        const hasNonActivePaths = Array.from(this.selectedPaths).some(path => 
+            !this.backupOperations.isBackupInProgress(path) && 
+            !this.backupOperations.isBackupPending(path)
+        );
         
         this.elements.backupButton.disabled = !hasNonActivePaths;
         this.elements.backupButton.className = `inline-flex items-center px-6 py-3 rounded-lg font-medium shadow-sm transition-colors duration-200 ${
@@ -237,37 +248,65 @@ export class BackupManager {
         }`;
     }
 
+    async processNextPendingBackup() {
+        // If we're at max concurrent backups, don't process more
+        if (this.activeBackupCount >= MAX_CONCURRENT_BACKUPS) {
+            return;
+        }
+
+        // Find a pending backup to process
+        const pendingPath = Array.from(this.selectedPaths).find(path => 
+            this.backupOperations.isBackupPending(path) && 
+            !this.backupOperations.isBackupInProgress(path)
+        );
+
+        if (!pendingPath) {
+            return;
+        }
+
+        try {
+            this.activeBackupCount++;
+            const result = await this.backupOperations.startBackup(pendingPath);
+            
+            if (result && result.success) {
+                if (!result.cancelled) {
+                    UIComponents.showStatus('backup-status', `Backup completed successfully for ${pendingPath}`, 'success');
+                    await this.refreshSnapshots();
+                    await this.removePath(pendingPath);
+                }
+            }
+        } catch (error) {
+            console.error(`Error during backup for ${pendingPath}:`, error);
+            UIComponents.showStatus('backup-status', `Backup failed for ${pendingPath}: ${error.message}`, 'error');
+            this.backupOperations.pendingBackups.delete(pendingPath);
+            this.backupOperations.updatePathItemUI(pendingPath);
+        } finally {
+            this.activeBackupCount--;
+            // Try to process next pending backup
+            this.processNextPendingBackup();
+        }
+    }
+
     async handleBackup() {
         const paths = Array.from(this.selectedPaths);
-        const nonActivePaths = paths.filter(path => !this.backupOperations.isBackupInProgress(path));
+        const nonActivePaths = paths.filter(path => 
+            !this.backupOperations.isBackupInProgress(path) && 
+            !this.backupOperations.isBackupPending(path)
+        );
 
         if (nonActivePaths.length === 0) return;
 
-        // Start backup for each non-active path
-        const backupPromises = nonActivePaths.map(async (path) => {
-            try {
-                const result = await this.backupOperations.startBackup(path);
-                
-                if (result && result.success) {
-                    // If backup was cancelled, don't show success message
-                    if (!result.cancelled) {
-                        UIComponents.showStatus('backup-status', `Backup completed successfully for ${path}`, 'success');
-                    }
-                    
-                    // Remove path from selection if backup completed (not cancelled)
-                    if (!result.cancelled) {
-                        await this.removePath(path);
-                    }
-                }
-            } catch (error) {
-                console.error(`Error during backup for ${path}:`, error);
-                UIComponents.showStatus('backup-status', `Backup failed for ${path}: ${error.message}`, 'error');
-            }
+        // Mark all paths as pending initially
+        nonActivePaths.forEach(path => {
+            this.backupOperations.pendingBackups.add(path);
+            this.backupOperations.updatePathItemUI(path);
         });
 
-        // Wait for all backups to complete
-        await Promise.all(backupPromises);
-        await this.refreshSnapshots();
+        // Start processing backups up to the maximum concurrent limit
+        const initialBatchSize = Math.min(MAX_CONCURRENT_BACKUPS - this.activeBackupCount, nonActivePaths.length);
+        for (let i = 0; i < initialBatchSize; i++) {
+            this.processNextPendingBackup();
+        }
     }
 
     async restoreBackup(path) {
@@ -281,19 +320,59 @@ export class BackupManager {
     }
 
     async deleteBackup(path) {
-        try {
-            // Set the deleting state in UI
-            this.uiStateManager.setPathDeleting(path, true);
+        const rowId = `backup-row-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        const row = document.getElementById(rowId);
+        const deleteButton = row?.querySelector('button:last-child');
 
+        try {
+            // Show confirmation dialog
+            const confirmed = await UIComponents.showConfirmDialog({
+                title: 'Delete Backup',
+                message: `Are you sure you want to delete the backup for:<br><span class="font-medium">${path}</span>?<br><br><span class="text-red-600">This action cannot be undone.</span>`,
+                confirmText: 'Yes, Delete Backup',
+                cancelText: 'No, Keep Backup',
+                confirmClass: 'bg-red-600 text-white hover:bg-red-700'
+            });
+
+            if (!confirmed) {
+                return;
+            }
+
+            // Set the deleting state in UI
+            if (deleteButton) {
+                deleteButton.disabled = true;
+                deleteButton.classList.remove('bg-red-600', 'hover:bg-red-700');
+                deleteButton.classList.add('bg-gray-400');
+                deleteButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Deleting...';
+            }
+
+            // Delete the snapshot
             await this.snapshotManager.deleteSnapshot(path);
-            await this.refreshSnapshots();
+
+            // Get fresh snapshot data
+            await this.snapshotManager.refreshSnapshots();
+
+            // Update UI state with fresh data
+            const stats = this.snapshotManager.getBackupStats();
+            this.uiStateManager.updateBackupStats(stats);
+            this.uiStateManager.updateBackupsTable(
+                this.snapshotManager.snapshotData,
+                (p) => this.restoreBackup(p),
+                (p) => this.deleteBackup(p)
+            );
+            
             UIComponents.showStatus('backup-status', 'Backup deleted successfully', 'success');
         } catch (error) {
             console.error('Error deleting backup:', error);
             UIComponents.showStatus('backup-status', 'Delete failed: ' + error.message, 'error');
-        } finally {
-            // Clear the deleting state in UI
-            this.uiStateManager.setPathDeleting(path, false);
+            
+            // Reset the delete button state on error
+            if (deleteButton) {
+                deleteButton.disabled = false;
+                deleteButton.classList.remove('bg-gray-400');
+                deleteButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                deleteButton.innerHTML = '<i class="fas fa-trash-alt mr-2"></i>Delete';
+            }
         }
     }
 }

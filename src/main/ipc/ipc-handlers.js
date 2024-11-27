@@ -16,45 +16,87 @@ function setupIpcHandlers() {
         ipcMain.handle('select-paths', () => fileDialogs.selectPaths());
         ipcMain.handle('select-restore-directory', () => fileDialogs.selectRestoreDirectory());
 
+        // Helper function for setting up backup progress tracking
+        const setupBackupProgress = (paths) => {
+            const backupKey = paths.sort().join('|');
+
+            // Set up progress handler
+            const progressHandler = (progress) => {
+                // Only handle progress for this specific backup
+                if (progress && progress.paths && progress.paths.sort().join('|') !== backupKey) {
+                    return;
+                }
+
+                console.log(`IPC: Sending progress update for ${backupKey}:`, progress);
+                // Send to all windows
+                BrowserWindow.getAllWindows().forEach(window => {
+                    window.webContents.send('backup-progress', {
+                        ...progress,
+                        paths // Include paths to identify which backup this belongs to
+                    });
+                });
+            };
+
+            // Store the handler reference
+            progressHandlers.set(backupKey, progressHandler);
+
+            // Add progress handler to progress service
+            progressService.on('progress', progressHandler);
+
+            return { backupKey, progressHandler };
+        };
+
+        // Helper function for cleanup after backup
+        const cleanupBackupProgress = (backupKey, progressHandler) => {
+            progressService.removeListener('progress', progressHandler);
+            progressHandlers.delete(backupKey);
+        };
+
+        // Repository handlers
+        ipcMain.handle('reconnect-repository', async () => {
+            console.log('IPC: Reconnecting to repository');
+            try {
+                await kopiaService.repositoryService.reconnectRepository();
+                return { success: true };
+            } catch (error) {
+                console.error('IPC: Error reconnecting to repository:', error);
+                throw error;
+            }
+        });
+
         // Backup handlers
         ipcMain.handle('start-backup', async (event, paths) => {
             console.log('IPC: Starting backup for paths:', paths);
             try {
-                const backupKey = paths.sort().join('|');
+                const { backupKey, progressHandler } = setupBackupProgress(paths);
 
-                // Set up progress handler before starting backup
-                const progressHandler = (progress) => {
-                    // Only handle progress for this specific backup
-                    if (progress && progress.paths && progress.paths.sort().join('|') !== backupKey) {
-                        return;
-                    }
-
-                    console.log(`IPC: Sending progress update for ${backupKey}:`, progress);
-                    // Send to all windows
-                    BrowserWindow.getAllWindows().forEach(window => {
-                        window.webContents.send('backup-progress', {
-                            ...progress,
-                            paths // Include paths to identify which backup this progress belongs to
-                        });
-                    });
-                };
-
-                // Store the handler reference
-                progressHandlers.set(backupKey, progressHandler);
-
-                // Add progress handler to progress service
-                progressService.on('progress', progressHandler);
-
-                // Start backup and wait for completion
-                const result = await kopiaService.startBackup(paths);
-
-                // Remove progress handler after backup completes
-                progressService.removeListener('progress', progressHandler);
-                progressHandlers.delete(backupKey);
-
-                return result;
+                try {
+                    // Start backup and wait for completion
+                    const result = await kopiaService.startBackup(paths);
+                    return result;
+                } finally {
+                    cleanupBackupProgress(backupKey, progressHandler);
+                }
             } catch (error) {
                 console.error('IPC: Error during backup:', error);
+                throw error;
+            }
+        });
+
+        ipcMain.handle('resume-backup', async (event, paths) => {
+            console.log('IPC: Resuming backup for paths:', paths);
+            try {
+                const { backupKey, progressHandler } = setupBackupProgress(paths);
+
+                try {
+                    // Resume backup and wait for completion
+                    const result = await kopiaService.backupService.resumeBackup(paths);
+                    return result;
+                } finally {
+                    cleanupBackupProgress(backupKey, progressHandler);
+                }
+            } catch (error) {
+                console.error('IPC: Error resuming backup:', error);
                 throw error;
             }
         });
@@ -76,15 +118,36 @@ function setupIpcHandlers() {
             kopiaService.restoreSnapshot(snapshotId, targetPath));
 
         // Settings handlers
-        ipcMain.handle('get-settings', () => configService.getSettings());
-        ipcMain.handle('save-settings', (event, settings) => configService.saveSettings(settings));
+        ipcMain.handle('get-settings', async () => {
+            const settings = await configService.getAllSettings();
+            return {
+                schedule: settings.backup.schedule,
+                retention: settings.backup.retention
+            };
+        });
+
+        ipcMain.handle('save-settings', async (event, settings) => {
+            if (settings.schedule) {
+                await configService.updateSchedule(settings.schedule);
+                await scheduler.updateSchedule(settings.schedule);
+            }
+            if (settings.retention) {
+                await configService.updateRetention(settings.retention);
+                await scheduler.updateRetentionPolicy(settings.retention);
+            }
+            return true;
+        });
 
         // Log handlers
         ipcMain.handle('get-logs', () => logger.getLogs());
 
         // Schedule handlers
-        ipcMain.handle('schedule-backup', (event, schedule) => scheduler.scheduleBackup(schedule));
-        ipcMain.handle('get-schedule', () => scheduler.getSchedule());
+        ipcMain.handle('schedule-backup', async (event, schedule) => {
+            await configService.updateSchedule(schedule);
+            return scheduler.updateSchedule(schedule);
+        });
+        
+        ipcMain.handle('get-schedule', () => scheduler.getScheduleStatus());
 
         // Cleanup on window close
         ipcMain.on('window-closing', () => {

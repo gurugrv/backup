@@ -130,6 +130,26 @@ export class UIStateManager {
         }
     }
 
+    setPathDeleting(path, isDeleting) {
+        const rowId = `backup-row-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        const row = document.getElementById(rowId);
+        if (!row) return;
+
+        const buttons = row.querySelectorAll('button');
+        buttons.forEach(button => {
+            if (isDeleting) {
+                button.disabled = true;
+                button.classList.remove('bg-blue-600', 'hover:bg-blue-700', 'bg-red-600', 'hover:bg-red-700');
+                button.classList.add('bg-gray-400');
+                if (button.querySelector('.fa-trash')) {
+                    button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i><span>Deleting...</span>';
+                }
+            } else {
+                this.updateBackupsTable(); // Refresh the entire table to restore proper state
+            }
+        });
+    }
+
     updateBackupsTable(pathsArray, snapshotManager, onRestoreBackup, onDeleteBackup) {
         const tbody = this.elements.yourBackupsTable;
         if (!tbody) return;
@@ -145,11 +165,18 @@ export class UIStateManager {
             const isDeleting = snapshotManager.isDeleting(directoryPath);
             
             let deleteButton;
+            let restoreButton;
+
             if (isDeleting) {
                 deleteButton = `
                     <button class="inline-flex items-center px-3 py-1.5 bg-gray-400 text-white rounded" disabled>
                         <i class="fas fa-spinner fa-spin mr-1.5"></i>
                         <span>Deleting...</span>
+                    </button>`;
+                restoreButton = `
+                    <button class="inline-flex items-center px-3 py-1.5 bg-gray-400 text-white rounded" disabled>
+                        <i class="fas fa-undo mr-1.5"></i>
+                        <span>Restore</span>
                     </button>`;
             } else {
                 deleteButton = `
@@ -157,14 +184,16 @@ export class UIStateManager {
                         <i class="fas fa-trash mr-1.5"></i>
                         <span>Delete</span>
                     </button>`;
+                restoreButton = `
+                    <button class="inline-flex items-center px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors" onclick="window.backupManager.restoreBackup('${displayPath}')">
+                        <i class="fas fa-undo mr-1.5"></i>
+                        <span>Restore</span>
+                    </button>`;
             }
 
             const actionButtons = hasBackup ? `
                 <div class="flex items-center justify-end gap-2">
-                    <button class="inline-flex items-center px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors" onclick="window.backupManager.restoreBackup('${displayPath}')">
-                        <i class="fas fa-undo mr-1.5"></i>
-                        <span>Restore</span>
-                    </button>
+                    ${restoreButton}
                     ${deleteButton}
                 </div>
             ` : '';

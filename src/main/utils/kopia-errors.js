@@ -10,7 +10,9 @@ class KopiaError extends Error {
 function handleKopiaError(error) {
     const errorOutput = error.stderr ? error.stderr.toString() : error.message;
     
-    if (errorOutput.includes('repository not initialized')) {
+    // Check for repository not initialized error
+    if (errorOutput.includes('repository not initialized') || 
+        errorOutput.includes('ERROR error connecting to repository: repository not initialized')) {
         return new KopiaError('Repository not initialized. Please connect to a repository first.', 'REPO_NOT_INITIALIZED');
     }
     

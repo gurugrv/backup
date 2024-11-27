@@ -90,6 +90,8 @@ export class UIStateManager {
     }
 
     updateBackupStats(stats) {
+        console.log('Updating backup stats:', stats);
+
         const { totalSize, totalFiles, lastBackupTime } = stats;
 
         const totalSizeElement = document.getElementById('total-size');
@@ -100,7 +102,8 @@ export class UIStateManager {
             totalSizeElement.textContent = UIComponents.formatBytes(totalSize);
         }
         if (totalFilesElement) {
-            totalFilesElement.textContent = (totalFiles || 0).toLocaleString();
+            console.log('Setting total files:', totalFiles);
+            totalFilesElement.textContent = totalFiles ? totalFiles.toLocaleString() : '0';
         }
         if (lastBackupElement) {
             lastBackupElement.textContent = lastBackupTime ? 
@@ -115,23 +118,38 @@ export class UIStateManager {
         } else {
             this.deletingPaths.delete(path);
         }
-        this.updateDeleteButton(path);
+        this.updateDeleteAndRestoreButtons(path);
     }
 
-    updateDeleteButton(path) {
+    updateDeleteAndRestoreButtons(path) {
         const row = document.getElementById(`backup-row-${path.replace(/[^a-zA-Z0-9]/g, '-')}`);
         if (!row) return;
 
         const deleteButton = row.querySelector('button:last-child');
-        if (!deleteButton) return;
+        const restoreButton = row.querySelector('button:first-child');
 
         if (this.deletingPaths.has(path)) {
-            deleteButton.disabled = true;
-            deleteButton.className = 'inline-flex items-center px-4 py-2 bg-gray-400 text-white rounded-lg shadow-sm font-medium cursor-not-allowed';
-            deleteButton.innerHTML = `
-                <i class="fas fa-spinner fa-spin mr-2"></i>
-                Deleting...
-            `;
+            // Update delete button
+            if (deleteButton) {
+                deleteButton.disabled = true;
+                deleteButton.className = 'inline-flex items-center px-4 py-2 bg-gray-400 text-white rounded-lg shadow-sm font-medium cursor-not-allowed';
+                deleteButton.innerHTML = `
+                    <i class="fas fa-spinner fa-spin mr-2"></i>
+                    Deleting...
+                `;
+            }
+
+            // Disable restore button
+            if (restoreButton) {
+                restoreButton.disabled = true;
+                restoreButton.className = 'inline-flex items-center px-4 py-2 bg-gray-400 text-white rounded-lg shadow-sm font-medium cursor-not-allowed mr-2';
+            }
+        } else {
+            // Re-enable restore button
+            if (restoreButton) {
+                restoreButton.disabled = false;
+                restoreButton.className = 'inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors duration-200 shadow-sm hover:shadow-md font-medium mr-2';
+            }
         }
     }
 

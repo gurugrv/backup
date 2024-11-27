@@ -2,10 +2,11 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const { handleKopiaError } = require('../../utils/kopia-errors');
+const { KOPIA_PATH } = require('../../utils/paths');
 
 class RestoreService {
     constructor(kopiaPath) {
-        this.kopiaPath = kopiaPath;
+        this.kopiaPath = KOPIA_PATH;
     }
 
     async restoreBackup(path, targetPath) {

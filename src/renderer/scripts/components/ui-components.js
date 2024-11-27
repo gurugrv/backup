@@ -72,154 +72,47 @@ export class UIComponents {
             return progress.message || 'Initializing backup...';
         }
 
-        // Handle estimation phase
-        if (progress.phase === 'estimating' || progress.estimating) {
-            return 'Estimating backup size...';
+        // Handle encryption/estimation phase - strict check for both phase and estimating flag
+        if ((progress.phase === 'estimating' || progress.phase === 'hashing') && progress.estimating) {
+            return 'Encrypting backup data...';
         }
 
+        // Handle upload phase - strict check for upload phase and not estimating
+        if (progress.phase === 'uploading' && !progress.estimating) {
+            const progressText = ['Uploading data to cloud'];
+
+            // Show uploaded size, and total size only if we have a proper estimate
+            if (progress.uploaded !== undefined) {
+                if (progress.estimated !== null && progress.estimated !== undefined) {
+                    progressText.push(`${this.formatBytes(progress.uploaded)} / ${this.formatBytes(progress.estimated)}`);
+                } else {
+                    progressText.push(`${this.formatBytes(progress.uploaded)} uploaded`);
+                }
+            }
+
+            // Add time remaining if available
+            if (progress.timeLeft) {
+                progressText.push(this.formatTimeLeft(progress.timeLeft));
+            }
+
+            return progressText.join(' • ');
+        }
+
+        // Default case - show basic progress info
         const progressText = [];
-
-        // Show uploaded/total size
-        if (progress.uploaded !== undefined && progress.estimated !== undefined) {
-            progressText.push(`${this.formatBytes(progress.uploaded)} / ${this.formatBytes(progress.estimated)}`);
+        if (progress.uploaded !== undefined) {
+            if (progress.estimated !== null && progress.estimated !== undefined) {
+                progressText.push(`${this.formatBytes(progress.uploaded)} / ${this.formatBytes(progress.estimated)}`);
+            } else {
+                progressText.push(`${this.formatBytes(progress.uploaded)} uploaded`);
+            }
         }
 
-        // Add time remaining if available
         if (progress.timeLeft) {
             progressText.push(this.formatTimeLeft(progress.timeLeft));
         }
 
-        const result = progressText.join(' • ');
-        console.log('UIComponents: Formatted progress text:', result);
-        return result;
-    }
-
-    static createPathItem(path, onRemove, isBackupInProgress = false, progress = null) {
-        console.log('UIComponents: Creating path item for:', path);
-        const item = document.createElement('div');
-        item.className = 'flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-300';
-        item.id = `path-item-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
-        
-        // Create the main row with all information
-        const row = document.createElement('div');
-        row.className = 'flex items-center p-4 gap-4';
-        
-        // Left section: Path info with icon
-        const pathSection = document.createElement('div');
-        pathSection.className = 'flex items-center gap-2 min-w-[200px]';
-        
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-folder text-primary';
-        
-        const pathText = document.createElement('span');
-        pathText.className = 'text-gray-700 select-all font-medium';
-        pathText.textContent = path;
-        
-        pathSection.appendChild(icon);
-        pathSection.appendChild(pathText);
-        
-        // Middle section: Progress info
-        const progressSection = document.createElement('div');
-        progressSection.className = 'flex items-center gap-2 flex-1';
-        progressSection.id = `progress-info-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
-        
-        if (isBackupInProgress && progress) {
-            const progressText = document.createElement('span');
-            progressText.className = 'text-sm text-gray-600';
-            progressText.textContent = this.formatProgressText(progress);
-            progressSection.appendChild(progressText);
-        }
-        
-        // Right section: Action button
-        const actionButton = document.createElement('button');
-        if (isBackupInProgress) {
-            actionButton.className = 'p-2 text-primary flex items-center gap-2';
-            actionButton.innerHTML = `
-                <i class="fas fa-spinner fa-spin"></i>
-                <span class="text-sm font-medium progress-percentage">0%</span>
-            `;
-            actionButton.disabled = true;
-            actionButton.title = 'Backup in progress';
-        } else {
-            actionButton.className = 'p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100';
-            actionButton.innerHTML = '<i class="fas fa-times"></i>';
-            actionButton.title = 'Remove from selection';
-            actionButton.onclick = () => onRemove(path);
-        }
-        
-        row.appendChild(pathSection);
-        row.appendChild(progressSection);
-        row.appendChild(actionButton);
-        item.appendChild(row);
-        
-        return item;
-    }
-
-    static updatePathItemProgress(path, progress) {
-        console.log('UIComponents: Updating path item progress for:', path);
-        const pathId = `path-item-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
-        const pathItem = document.getElementById(pathId);
-        if (!pathItem) {
-            console.warn('Path item not found for path:', path);
-            return;
-        }
-
-        // Update progress percentage
-        const progressPercentage = pathItem.querySelector('.progress-percentage');
-        if (progressPercentage && progress) {
-            progressPercentage.textContent = `${Math.min(progress.percentage || 0, 100).toFixed(1)}%`;
-        }
-
-        // Update progress info section
-        const progressSection = document.getElementById(`progress-info-${path.replace(/[^a-zA-Z0-9]/g, '-')}`);
-        if (!progressSection) {
-            console.warn('Progress section not found for path:', path);
-            return;
-        }
-
-        if (progress) {
-            const progressText = document.createElement('span');
-            progressText.className = 'text-sm text-gray-600';
-            progressText.textContent = this.formatProgressText(progress);
-            
-            progressSection.innerHTML = '';
-            progressSection.appendChild(progressText);
-        } else {
-            progressSection.innerHTML = '';
-        }
-    }
-
-    static setLoading(button, isLoading) {
-        if (!button) {
-            console.warn('Cannot set loading state on null element');
-            return;
-        }
-
-        const originalContent = button.dataset.originalContent || button.innerHTML;
-        
-        if (isLoading) {
-            if (!button.dataset.originalContent) {
-                button.dataset.originalContent = originalContent;
-            }
-            button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Loading...';
-            button.disabled = true;
-            button.classList.add('opacity-50', 'cursor-not-allowed');
-        } else {
-            button.innerHTML = originalContent;
-            button.disabled = false;
-            button.classList.remove('opacity-50', 'cursor-not-allowed');
-            delete button.dataset.originalContent;
-        }
-    }
-
-    static clearElement(element) {
-        if (!element) {
-            console.warn('Cannot clear null element');
-            return;
-        }
-        while (element.firstChild) {
-            element.removeChild(element.firstChild);
-        }
+        return progressText.join(' • ');
     }
 
     static createTableRow(cellContents) {
@@ -256,5 +149,145 @@ export class UIComponents {
             row.appendChild(cell);
         });
         return row;
+    }
+
+    static async showConfirmDialog({ title, message, confirmText, cancelText = 'Cancel', confirmClass = 'bg-red-100 text-red-700 hover:bg-red-200' }) {
+        const confirmDialog = document.createElement('div');
+        confirmDialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        confirmDialog.innerHTML = `
+            <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">${title}</h3>
+                <p class="text-gray-600 mb-6">${message}</p>
+                <div class="flex justify-end gap-3">
+                    <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium" id="confirm-no">${cancelText}</button>
+                    <button class="px-4 py-2 ${confirmClass} rounded-lg font-medium" id="confirm-yes">${confirmText}</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(confirmDialog);
+
+        return new Promise((resolve) => {
+            const handleNo = () => {
+                document.body.removeChild(confirmDialog);
+                resolve(false);
+            };
+
+            const handleYes = () => {
+                document.body.removeChild(confirmDialog);
+                resolve(true);
+            };
+
+            document.getElementById('confirm-no').addEventListener('click', handleNo);
+            document.getElementById('confirm-yes').addEventListener('click', handleYes);
+
+            // Close on background click
+            confirmDialog.addEventListener('click', (e) => {
+                if (e.target === confirmDialog) {
+                    handleNo();
+                }
+            });
+        });
+    }
+
+    static setLoading(button, isLoading) {
+        if (!button) {
+            console.warn('Cannot set loading state on null element');
+            return;
+        }
+
+        const originalContent = button.dataset.originalContent || button.innerHTML;
+        
+        if (isLoading) {
+            if (!button.dataset.originalContent) {
+                button.dataset.originalContent = originalContent;
+            }
+            button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Loading...';
+            button.disabled = true;
+            button.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+            button.innerHTML = originalContent;
+            button.disabled = false;
+            button.classList.remove('opacity-50', 'cursor-not-allowed');
+            delete button.dataset.originalContent;
+        }
+    }
+
+    static clearElement(element) {
+        if (!element) {
+            console.warn('Cannot clear null element');
+            return;
+        }
+        while (element.firstChild) {
+            element.removeChild(element.firstChild);
+        }
+    }
+
+    static updatePathItemProgress(path, progress) {
+        console.log('UIComponents: Updating path item progress for:', path);
+        const pathId = `path-item-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        const pathItem = document.getElementById(pathId);
+        if (!pathItem) {
+            console.warn('Path item not found for path:', path);
+            return;
+        }
+
+        // Update progress percentage
+        const progressPercentage = pathItem.querySelector('.progress-percentage');
+        if (progressPercentage && progress) {
+            progressPercentage.textContent = `${Math.min(progress.percentage || 0, 100).toFixed(1)}%`;
+        }
+
+        // Update progress info section
+        const progressSection = document.getElementById(`progress-info-${path.replace(/[^a-zA-Z0-9]/g, '-')}`);
+        if (!progressSection) {
+            console.warn('Progress section not found for path:', path);
+            return;
+        }
+
+        if (progress) {
+            const progressText = document.createElement('span');
+            progressText.className = 'text-sm text-gray-600';
+            progressText.textContent = this.formatProgressText(progress);
+            
+            progressSection.innerHTML = '';
+            progressSection.appendChild(progressText);
+        } else {
+            progressSection.innerHTML = '';
+        }
+    }
+
+    static createPathItem(path, onRemove, isBackupInProgress, currentProgress) {
+        const pathItem = document.createElement('div');
+        pathItem.id = `path-item-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        pathItem.className = 'flex items-center justify-between p-4 bg-white rounded-lg shadow-sm border border-gray-200';
+        
+        const pathInfo = document.createElement('div');
+        pathInfo.className = 'flex-1';
+        pathInfo.innerHTML = `
+            <div class="font-medium text-gray-900">${path}</div>
+            <div id="progress-info-${path.replace(/[^a-zA-Z0-9]/g, '-')}" class="text-sm text-gray-600"></div>
+        `;
+
+        const actions = document.createElement('div');
+        actions.className = 'actions flex items-center gap-2';
+
+        if (!isBackupInProgress) {
+            const removeButton = document.createElement('button');
+            removeButton.className = 'px-3 py-1 rounded text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors duration-200';
+            removeButton.innerHTML = '<i class="fas fa-times mr-1.5"></i>Remove';
+            removeButton.onclick = () => onRemove(path);
+            actions.appendChild(removeButton);
+        }
+
+        pathItem.appendChild(pathInfo);
+        pathItem.appendChild(actions);
+
+        // Update progress if available
+        if (currentProgress) {
+            this.updatePathItemProgress(path, currentProgress);
+        }
+
+        return pathItem;
     }
 }

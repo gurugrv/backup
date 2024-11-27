@@ -31,6 +31,7 @@ export class SnapshotOperations {
             
             if (!existingSnapshot || new Date(snapshot.startTime) > new Date(existingSnapshot.startTime)) {
                 this.snapshotData.set(sourcePath, {
+                    id: snapshot.id,
                     startTime: snapshot.startTime,
                     stats: snapshot.stats || { totalFiles: 0, totalSize: 0 },
                     path: sourcePath
@@ -42,6 +43,11 @@ export class SnapshotOperations {
     async deleteBackup(path) {
         try {
             const folderName = path.split(/[\\/]/).pop();
+            const snapshotInfo = this.snapshotData.get(path);
+            const snapshotId = snapshotInfo?.id || 'unknown';
+            
+            console.log(`Deleting backup - Snapshot ID: ${snapshotId}, Path: ${path}`);
+            
             const confirmed = confirm(`Are you sure you want to delete the backup for "${folderName}"?\nPath: ${path}\n\nThis will permanently delete all backup files from the repository.`);
             if (!confirmed) return false;
 
@@ -59,15 +65,20 @@ export class SnapshotOperations {
             }
 
             this.deletingPaths.add(path);
-            await window.electron.deleteBackup(path);
+            const result = await window.electron.deleteBackup(path);
             this.deletingPaths.delete(path);
-            await this.refreshSnapshots();
             
-            UIComponents.showStatus('backup-status', 'Backup and associated files deleted successfully', 'success');
-            return true;
+            if (result.success) {
+                // Remove the deleted path from local data instead of refreshing
+                this.snapshotData.delete(path);
+                console.log(`Successfully deleted backup - Snapshot ID: ${snapshotId}`);
+                UIComponents.showStatus('backup-status', 'Backup and associated files deleted successfully', 'success');
+                return true;
+            } else {
+                throw new Error(result.error || 'Failed to delete backup');
+            }
         } catch (error) {
             this.deletingPaths.delete(path);
-            await this.refreshSnapshots();
             UIComponents.showStatus('backup-status', `Error deleting backup: ${error.message}`, 'error');
             return false;
         }

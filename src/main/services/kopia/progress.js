@@ -4,18 +4,97 @@ const { EventEmitter } = require('events');
 class ProgressService extends EventEmitter {
     constructor() {
         super();
+        this.progressByPath = new Map(); // Track progress for each path
+        this.lastUpdateTime = new Map(); // Track last update time for each path
+        this.updateDebounceTime = 100; // Minimum time between updates in ms
     }
 
     sendProgressUpdate(progress) {
+        if (!progress) return;
+
         console.log('ProgressService: Sending progress update:', progress);
+        
+        const currentTime = Date.now();
+        const paths = progress.paths || [];
+
+        // Update progress for each path
+        paths.forEach(path => {
+            const lastUpdate = this.lastUpdateTime.get(path) || 0;
+            
+            // Only update if enough time has passed since last update
+            if (currentTime - lastUpdate >= this.updateDebounceTime) {
+                this.progressByPath.set(path, {
+                    ...progress,
+                    timestamp: currentTime
+                });
+                this.lastUpdateTime.set(path, currentTime);
+            }
+        });
+
+        // Create aggregated progress update
+        const aggregatedProgress = this.createAggregatedProgress(paths);
+
         // Emit the progress event
-        this.emit('progress', progress);
+        this.emit('progress', aggregatedProgress);
         
         // Also send directly to windows for backward compatibility
         const windows = BrowserWindow.getAllWindows();
         windows.forEach(window => {
-            window.webContents.send('backup-progress', progress);
+            window.webContents.send('backup-progress', aggregatedProgress);
         });
+    }
+
+    createAggregatedProgress(paths) {
+        // If no paths provided, aggregate all active paths
+        const pathsToAggregate = paths.length > 0 ? paths : Array.from(this.progressByPath.keys());
+        
+        if (pathsToAggregate.length === 0) return null;
+
+        let totalHashing = 0;
+        let totalHashed = 0;
+        let totalHashedBytes = 0;
+        let totalCached = 0;
+        let totalCachedBytes = 0;
+        let totalUploaded = 0;
+        let totalEstimated = 0;
+        let isEstimating = false;
+        let activeCount = 0;
+
+        pathsToAggregate.forEach(path => {
+            const progress = this.progressByPath.get(path);
+            if (progress) {
+                activeCount++;
+                totalHashing += progress.hashing || 0;
+                totalHashed += progress.hashed || 0;
+                totalHashedBytes += progress.hashedBytes || 0;
+                totalCached += progress.cached || 0;
+                totalCachedBytes += progress.cachedBytes || 0;
+                totalUploaded += progress.uploaded || 0;
+                totalEstimated += progress.estimated || 0;
+                isEstimating = isEstimating || progress.estimating;
+            }
+        });
+
+        // Calculate overall percentage
+        let percentage = 0;
+        if (totalEstimated > 0 && !isEstimating) {
+            percentage = (totalUploaded / totalEstimated) * 100;
+        }
+
+        return {
+            phase: isEstimating ? 'estimating' : 'uploading',
+            hashing: totalHashing,
+            hashed: totalHashed,
+            hashedBytes: totalHashedBytes,
+            cached: totalCached,
+            cachedBytes: totalCachedBytes,
+            uploaded: totalUploaded,
+            estimated: totalEstimated,
+            percentage: percentage,
+            estimating: isEstimating,
+            paths: pathsToAggregate,
+            activeCount
+        };
     }
 
     convertToBytes(value, unit) {
@@ -72,7 +151,6 @@ class ProgressService extends EventEmitter {
         }
 
         // Pattern for "/ 0 hashing, 35 hashed (21 MB), 0 cached (0 B), uploaded 21 MB, estimated 63.1 MB (33.3%) 31s left"
-        // Also matches "- 1 hashing, 0 hashed (52.3 MB), 0 cached (0 B), uploaded 50 MB, estimated 874.5 MB (6.0%) 10m8s left"
         const mainPattern = /[-|/\\*]\s+(\d+)\s+hashing,\s+(\d+)\s+hashed\s+\(([\d.]+)\s+([KMG]?B)\),\s+(\d+)\s+cached\s+\(([\d.]+)\s+([KMG]?B)\),\s+uploaded\s+([\d.]+)\s+([KMG]?B),\s+estimated\s+([\d.]+)\s+([KMG]?B)\s+\(([\d.]+)%\)\s+(\d+)([ms])?(\d+)?s\s+left/;
 
         // Alternative pattern without estimated size
@@ -146,17 +224,18 @@ class ProgressService extends EventEmitter {
                 uploadedUnit
             ] = altMatch;
 
+            const hashedBytes = this.convertToBytes(hashedSize, hashedUnit);
             const uploaded = this.convertToBytes(uploadedSize, uploadedUnit);
 
             return {
                 phase: 'uploading',
                 hashing: parseInt(hashing),
                 hashed: parseInt(hashed),
-                hashedBytes: this.convertToBytes(hashedSize, hashedUnit),
+                hashedBytes,
                 cached: parseInt(cached),
                 cachedBytes: this.convertToBytes(cachedSize, cachedUnit),
                 uploaded,
-                estimated: 0,
+                estimated: null,
                 percentage: 0,
                 timeLeft: 0,
                 uploadSpeed: 0,
@@ -192,7 +271,6 @@ class ProgressService extends EventEmitter {
         }
 
         // Pattern for "files processed" format
-        // Example: "0 files (170 Bytes) · 0 files cached (0 Bytes) · 170 Bytes / 340 Bytes (0.0%)"
         const filesPattern = /(\d+)\s+files?\s+\(([\d.]+)\s+([KMG]?B)\)\s+·\s+(\d+)\s+files?\s+cached\s+\(([\d.]+)\s+([KMG]?B)\)\s+·\s+([\d.]+)\s+([KMG]?B)\s+\/\s+([\d.]+)\s+([KMG]?B)\s+\(([\d.]+)%\)/;
         const filesMatch = text.match(filesPattern);
         if (filesMatch) {
@@ -256,6 +334,18 @@ class ProgressService extends EventEmitter {
         }
 
         return null;
+    }
+
+    clearProgress(paths) {
+        if (paths && paths.length > 0) {
+            paths.forEach(path => {
+                this.progressByPath.delete(path);
+                this.lastUpdateTime.delete(path);
+            });
+        } else {
+            this.progressByPath.clear();
+            this.lastUpdateTime.clear();
+        }
     }
 }
 

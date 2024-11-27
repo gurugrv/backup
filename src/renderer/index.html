@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html class="h-full">
 <head>
-    <title>BackYup</title>
+    <title>BackYup - Say yes to Backup!</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:">
@@ -64,6 +64,9 @@
                     </button>
                 </div>
 
+                <!-- Status Messages -->
+                <div id="backup-status"></div>
+
                 <!-- Selected Paths -->
                 <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow duration-300">
                     <div id="selected-paths" class="max-h-[400px] overflow-y-auto">
@@ -73,9 +76,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Status Messages -->
-                <div id="backup-status"></div>
 
                 <!-- My Backups -->
                 <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow duration-300">
@@ -107,7 +107,7 @@
 
         <!-- Settings Tab -->
         <div id="settings" class="tab-content hidden">
-            <!-- Settings content will be populated here -->
+            <!-- Settings content will be populated by SettingsManager -->
         </div>
     </main>
 

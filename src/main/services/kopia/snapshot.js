@@ -2,20 +2,16 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const { handleKopiaError } = require('../../utils/kopia-errors');
+const { KOPIA_PATH } = require('../../utils/paths');
 
 class SnapshotService {
-    constructor(kopiaPath) {
-        this.kopiaPath = kopiaPath;
+    constructor(kopiaPath, repositoryService) {
+        this.kopiaPath = KOPIA_PATH;
+        this.repositoryService = repositoryService;
     }
 
     async checkRepository() {
-        try {
-            await execFileAsync(this.kopiaPath, ['repository', 'status', '--json']);
-            return true;
-        } catch (error) {
-            console.error('Repository not connected:', error);
-            return false;
-        }
+        return this.repositoryService.ensureConnected();
     }
 
     async getSnapshots() {
@@ -42,18 +38,27 @@ class SnapshotService {
             console.log('Parsed snapshots:', snapshots);
 
             // Format snapshots for UI
-            const formattedSnapshots = snapshots.map(snapshot => ({
-                id: snapshot.id,
-                startTime: snapshot.startTime,
-                endTime: snapshot.endTime,
-                source: snapshot.source,
-                stats: {
-                    totalSize: snapshot.stats?.totalSize || 0,
-                    totalFiles: ((snapshot.stats?.fileCount || 0) + (snapshot.stats?.cachedFiles || 0)),
-                    dirCount: snapshot.stats?.dirCount || 0
-                }
-            }));
+            const formattedSnapshots = snapshots.map(snapshot => {
+                // Log raw stats for debugging
+                console.log('Raw snapshot stats:', snapshot.stats);
+                
+                const totalFiles = (snapshot.stats?.fileCount || 0) + (snapshot.stats?.cachedFiles || 0);
+                console.log('Calculated total files:', totalFiles);
 
+                return {
+                    id: snapshot.id,
+                    startTime: snapshot.startTime,
+                    endTime: snapshot.endTime,
+                    source: snapshot.source,
+                    stats: {
+                        totalSize: snapshot.stats?.totalSize || 0,
+                        totalFiles: totalFiles,
+                        dirCount: snapshot.stats?.dirCount || 0
+                    }
+                };
+            });
+
+            console.log('Formatted snapshots:', formattedSnapshots);
             return { success: true, snapshots: formattedSnapshots };
         } catch (error) {
             console.error('Failed to get snapshots:', error);
@@ -100,27 +105,30 @@ class SnapshotService {
 
     async deleteBackup(path) {
         try {
-            // Check repository connection first
-            const isConnected = await this.checkRepository();
-            if (!isConnected) {
-                return { success: false, error: 'Repository not connected' };
-            }
-
             console.log(`Deleting backup for path: ${path}`);
-            // Get snapshots for the path
-            const { stdout } = await execFileAsync(this.kopiaPath, ['snapshot', 'list', '--json', path]);
-            const snapshots = JSON.parse(stdout);
             
-            // Delete each snapshot for the path
-            for (const snapshot of snapshots) {
-                // Delete the snapshot using snapshot delete command
-                await execFileAsync(this.kopiaPath, ['snapshot', 'delete', snapshot.id, '--delete']);
-                console.log(`Deleted snapshot ${snapshot.id}`);
+            // Delete all snapshots for this source using proper kopia command
+            await execFileAsync(this.kopiaPath, [
+                'snapshot', 
+                'delete', 
+                '--delete',  // Required flag for deletion
+                '--all-snapshots-for-source',  // Delete all snapshots for this source
+                path
+            ]);
+            console.log(`Deleted all snapshots for ${path}`);
+
+            // Delete the source policy
+            try {
+                await execFileAsync(this.kopiaPath, [
+                    'policy', 
+                    'delete',
+                    path
+                ]);
+                console.log(`Deleted policy for path ${path}`);
+            } catch (policyError) {
+                console.warn('Error deleting policy (may not exist):', policyError);
+                // Don't throw error for policy deletion failure
             }
-            
-            // Run full maintenance to clean up repository
-            await execFileAsync(this.kopiaPath, ['maintenance', 'run', '--full', '--safety=none']);
-            console.log('Repository maintenance completed');
             
             return { success: true, message: 'Backup deleted successfully' };
         } catch (error) {
@@ -172,11 +180,15 @@ class SnapshotService {
 
             // Get the most recent snapshot
             const latestSnapshot = snapshots[snapshots.length - 1];
+            console.log('Latest snapshot stats:', latestSnapshot.stats);
             
+            const totalFiles = (latestSnapshot.stats?.fileCount || 0) + (latestSnapshot.stats?.cachedFiles || 0);
+            console.log('Calculated total files:', totalFiles);
+
             return {
                 success: true,
                 stats: {
-                    totalFiles: (latestSnapshot.stats?.fileCount || 0) + (latestSnapshot.stats?.cachedFiles || 0),
+                    totalFiles: totalFiles,
                     totalSize: latestSnapshot.stats?.totalSize || 0,
                     lastBackup: latestSnapshot.startTime
                 }

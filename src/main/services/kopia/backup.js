@@ -2,11 +2,13 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const { handleKopiaError } = require('../../utils/kopia-errors');
+const { KOPIA_PATH } = require('../../utils/paths');
 
 class BackupService {
-    constructor(kopiaPath, progressService) {
-        this.kopiaPath = kopiaPath;
+    constructor(kopiaPath, progressService, repositoryService) {
+        this.kopiaPath = KOPIA_PATH;
         this.progressService = progressService;
+        this.repositoryService = repositoryService;
         this.backupProcesses = new Map(); // Map to store multiple backup processes
         this.isCancelling = new Set(); // Track cancelling state for each backup
     }
@@ -28,13 +30,27 @@ class BackupService {
         }
     }
 
-    async startBackup(paths) {
+    async startBackup(paths, isResume = false) {
         try {
-            console.log('Starting backup for paths:', paths);
+            console.log(`${isResume ? 'Resuming' : 'Starting'} backup for paths:`, paths);
             const processKey = this.getProcessKey(paths);
 
+            // Ensure repository is connected
+            await this.repositoryService.ensureConnected();
+
             return new Promise((resolve, reject) => {
-                const args = ['snapshot', 'create', '--parallel=1', '--progress-update-interval=1s', ...paths];
+                // Base arguments for backup
+                const args = [
+                    'snapshot', 
+                    'create',
+                    '--parallel=8',  // Upload 8 files in parallel
+                    '--progress-update-interval=1s',
+                    '--fail-fast'    // Fail immediately on first error
+                ];
+
+                // Add paths at the end
+                args.push(...paths);
+
                 console.log('Executing backup command:', this.kopiaPath, args.join(' '));
                 
                 const backupProcess = execFile(this.kopiaPath, args);
@@ -49,16 +65,28 @@ class BackupService {
                     this.handleProcessOutput(data, processKey);
                 });
 
-                backupProcess.on('close', (code) => {
+                backupProcess.on('close', async (code) => {
                     this.backupProcesses.delete(processKey);
 
-                    // Send final progress update to clear the progress display for this backup
+                    // Clean up if backup failed, but only for the specific paths
+                    if (code !== 0 && !this.isCancelling.has(processKey)) {
+                        const { stdout } = await execFileAsync(this.kopiaPath, ['snapshot', 'list', '--incomplete', '--json']);
+                        const incompleteSnapshots = JSON.parse(stdout);
+                        const relevantSnapshots = incompleteSnapshots.filter(snapshot => 
+                            paths.some(path => snapshot.source === path)
+                        );
+                        
+                        if (relevantSnapshots.length > 0) {
+                            await this.cleanupIncompleteSnapshots(relevantSnapshots);
+                        }
+                    }
+
+                    // Send final progress update
                     this.progressService.sendProgressUpdate({ 
                         paths: processKey.split('|'), 
                         completed: true 
                     });
 
-                    // If we were cancelling this specific backup, treat it as a success
                     if (this.isCancelling.has(processKey)) {
                         this.isCancelling.delete(processKey);
                         resolve({ 
@@ -84,16 +112,28 @@ class BackupService {
                     }
                 });
 
-                backupProcess.on('error', (error) => {
+                backupProcess.on('error', async (error) => {
                     this.backupProcesses.delete(processKey);
 
-                    // Send final progress update to clear the progress display for this backup
+                    // Clean up on error, but only for the specific paths
+                    if (!this.isCancelling.has(processKey)) {
+                        const { stdout } = await execFileAsync(this.kopiaPath, ['snapshot', 'list', '--incomplete', '--json']);
+                        const incompleteSnapshots = JSON.parse(stdout);
+                        const relevantSnapshots = incompleteSnapshots.filter(snapshot => 
+                            paths.some(path => snapshot.source === path)
+                        );
+                        
+                        if (relevantSnapshots.length > 0) {
+                            await this.cleanupIncompleteSnapshots(relevantSnapshots);
+                        }
+                    }
+
+                    // Send final progress update
                     this.progressService.sendProgressUpdate({ 
                         paths: processKey.split('|'), 
                         completed: true 
                     });
 
-                    // If we were cancelling this specific backup, don't treat it as an error
                     if (this.isCancelling.has(processKey)) {
                         this.isCancelling.delete(processKey);
                         resolve({ 
@@ -112,6 +152,61 @@ class BackupService {
         } catch (error) {
             console.error('Failed to create backup:', error);
             throw handleKopiaError(error);
+        }
+    }
+
+    async resumeBackup(paths) {
+        try {
+            console.log('Attempting to resume backup for paths:', paths);
+            const processKey = this.getProcessKey(paths);
+
+            // Ensure repository is connected
+            await this.repositoryService.ensureConnected();
+
+            // Check for incomplete snapshots first
+            const { stdout } = await execFileAsync(this.kopiaPath, ['snapshot', 'list', '--incomplete', '--json']);
+            const incompleteSnapshots = JSON.parse(stdout);
+            
+            // Only clean up incomplete snapshots for the specific paths being resumed
+            if (incompleteSnapshots.length > 0) {
+                const relevantSnapshots = incompleteSnapshots.filter(snapshot => 
+                    paths.some(path => snapshot.source === path)
+                );
+                
+                if (relevantSnapshots.length > 0) {
+                    await this.cleanupIncompleteSnapshots(relevantSnapshots);
+                }
+            }
+
+            return this.startBackup(paths, true);
+        } catch (error) {
+            console.error('Failed to resume backup:', error);
+            throw handleKopiaError(error);
+        }
+    }
+
+    async cleanupIncompleteSnapshots(snapshots) {
+        try {
+            console.log('Cleaning up incomplete snapshots...');
+            
+            // Ensure repository is connected
+            await this.repositoryService.ensureConnected();
+            
+            // Delete incomplete snapshots using proper kopia command
+            for (const snapshot of snapshots) {
+                if (snapshot.incomplete) {
+                    await execFileAsync(this.kopiaPath, ['snapshot', 'delete', snapshot.id, '--delete']);
+                    console.log(`Cleaned up incomplete snapshot ${snapshot.id}`);
+                }
+            }
+        } catch (error) {
+            console.warn('Error during cleanup:', error);
+            // Try to reconnect if we encounter connection issues
+            try {
+                await this.repositoryService.reconnectRepository();
+            } catch (reconnectError) {
+                console.error('Failed to reconnect during cleanup:', reconnectError);
+            }
         }
     }
 
@@ -138,18 +233,15 @@ class BackupService {
                 
                 console.log(`Backup cancelled successfully for ${processKey}`);
                 
-                // Clean up any partial snapshots
-                try {
-                    await execFileAsync(this.kopiaPath, ['snapshot', 'list', '--incomplete', '--json'])
-                        .then(async ({stdout}) => {
-                            const incompleteSnapshots = JSON.parse(stdout);
-                            for (const snapshot of incompleteSnapshots) {
-                                await execFileAsync(this.kopiaPath, ['snapshot', 'delete', snapshot.id, '--delete']);
-                                console.log(`Cleaned up incomplete snapshot ${snapshot.id}`);
-                            }
-                        });
-                } catch (cleanupError) {
-                    console.warn('Error during cleanup:', cleanupError);
+                // Clean up any partial snapshots for the specific paths
+                const { stdout } = await execFileAsync(this.kopiaPath, ['snapshot', 'list', '--incomplete', '--json']);
+                const incompleteSnapshots = JSON.parse(stdout);
+                const relevantSnapshots = incompleteSnapshots.filter(snapshot => 
+                    paths.some(path => snapshot.source === path)
+                );
+                
+                if (relevantSnapshots.length > 0) {
+                    await this.cleanupIncompleteSnapshots(relevantSnapshots);
                 }
                 
                 return { 
@@ -163,7 +255,7 @@ class BackupService {
                 return { success: false, message: error.message };
             } finally {
                 this.isCancelling.delete(processKey);
-                // Send final progress update to clear the progress display for this backup
+                // Send final progress update
                 this.progressService.sendProgressUpdate({ 
                     paths: processKey.split('|'), 
                     completed: true 
@@ -178,9 +270,31 @@ class BackupService {
             const processKey = this.getProcessKey(paths);
             const isInProgress = this.backupProcesses.has(processKey);
 
+            // Check for incomplete snapshots if not in progress
+            if (!isInProgress) {
+                const { stdout } = await execFileAsync(this.kopiaPath, ['snapshot', 'list', '--incomplete', '--json']);
+                const incompleteSnapshots = JSON.parse(stdout);
+                const relevantSnapshots = incompleteSnapshots.filter(snapshot => 
+                    paths.some(path => snapshot.source === path)
+                );
+                
+                if (relevantSnapshots.length > 0) {
+                    return {
+                        inProgress: false,
+                        hasIncomplete: true,
+                        canResume: true,
+                        progress: 0,
+                        message: 'Previous backup incomplete. Can be resumed.',
+                        paths: processKey.split('|')
+                    };
+                }
+            }
+
             return {
                 inProgress: isInProgress,
-                progress: isInProgress ? 50 : 100, // Simplified progress indication
+                hasIncomplete: false,
+                canResume: false,
+                progress: isInProgress ? 50 : 100,
                 message: isInProgress ? 'Backup in progress...' : 'Backup completed',
                 paths: processKey.split('|')
             };
